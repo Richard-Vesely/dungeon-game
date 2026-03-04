@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Průzkumník Dungeonu</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a1a;overflow:hidden;font-family:'Segoe UI',sans-serif;color:#e0e0e0}
+canvas#game{display:block}
+#ui{position:fixed;top:0;left:0;right:0;height:44px;background:linear-gradient(180deg,#1a1a3e,#0f0f23);display:none;align-items:center;padding:0 16px;gap:20px;font-size:15px;z-index:10;border-bottom:2px solid #2c2c54}
+.stat{display:flex;align-items:center;gap:5px}
+.stat .icon{font-size:18px}
+.stat .lb{color:#8888aa;font-size:12px}
+.stat .vl{color:#fff;font-weight:bold}
+#hpBg{width:110px;height:10px;background:#333;border-radius:5px;overflow:hidden}
+#hpBar{height:100%;background:#2ecc71;border-radius:5px;transition:width .3s,background .3s}
+#msgs{position:fixed;bottom:10px;left:10px;max-width:380px;z-index:10;font-size:13px;pointer-events:none}
+#msgs .m{padding:2px 7px;margin-top:2px;background:rgba(15,15,35,.85);border-radius:3px;border-left:3px solid #474787}
+canvas#mm{position:fixed;bottom:10px;right:10px;border:2px solid #2c2c54;border-radius:4px;z-index:10;image-rendering:pixelated;display:none}
+#ov{position:fixed;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;background:rgba(10,10,26,.93);text-align:center}
+#ov.hid{display:none}
+#ov h1{font-size:44px;margin-bottom:12px;color:#ffd700;text-shadow:0 0 20px rgba(255,215,0,.4)}
+#ov h2{font-size:26px;margin-bottom:10px}
+#ov p{font-size:17px;color:#8888aa;margin:3px 0}
+.hint{margin-top:28px;font-size:19px;color:#ffd700;animation:pulse 1.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
+.ctrl{margin-top:20px;font-size:13px;color:#6666aa;line-height:1.8}
+.scr{font-size:34px;color:#ffd700;margin:14px 0}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div class="stat"><span class="icon">❤️</span><div id="hpBg"><div id="hpBar"></div></div><span class="vl" id="hpT">20/20</span></div>
+  <div class="stat"><span class="icon">⚔️</span><span class="lb">Útok</span><span class="vl" id="atkT">2</span></div>
+  <div class="stat"><span class="icon">🛡️</span><span class="lb">Obrana</span><span class="vl" id="defT">0</span></div>
+  <div class="stat"><span class="icon">🏰</span><span class="lb">Patro</span><span class="vl" id="lvT">1</span></div>
+  <div class="stat"><span class="icon">⭐</span><span class="lb">Skóre</span><span class="vl" id="scrT">0</span></div>
+</div>
+<div id="msgs"></div>
+<canvas id="mm"></canvas>
+<div id="ov">
+  <h1>🏰 Průzkumník Dungeonu</h1>
+  <h2>Prozkoumej temné podzemí!</h2>
+  <p>Sbírej poklady, bojuj s příšerami a dostań se co nejhlouběji!</p>
+  <div class="ctrl"><strong>Ovládání:</strong><br>← ↑ → ↓ nebo W A S D — pohyb<br>Naraz do příšery — útok<br>Mezerník — čekej (přeskoč tah)<br>Najdi schody 🪜 a sestup do dalšího patra<br>Projdi 10 pater a unikni!</div>
+  <div class="hint">⏎ Stiskni ENTER pro start</div>
+</div>
+<script>
+const TS=32,DW=45,DH=32,VR=5,MMS=3;
+const T={W:0,F:1,S:2};
+const MONS=[
+  {name:'Krysa',emoji:'🐀',hp:3,atk:1,sc:10,ml:1},
+  {name:'Netopýr',emoji:'🦇',hp:4,atk:1,sc:15,ml:1},
+  {name:'Had',emoji:'🐍',hp:6,atk:2,sc:20,ml:2},
+  {name:'Pavouk',emoji:'🕷️',hp:7,atk:2,sc:25,ml:3},
+  {name:'Duch',emoji:'👻',hp:8,atk:3,sc:35,ml:4},
+  {name:'Kostlivec',emoji:'💀',hp:10,atk:3,sc:40,ml:5},
+  {name:'Démon',emoji:'👹',hp:12,atk:4,sc:55,ml:7},
+  {name:'Drak',emoji:'🐉',hp:18,atk:5,sc:100,ml:9}
+];
+const cv=document.getElementById('game'),cx=cv.getContext('2d');
+const mc=document.getElementById('mm'),mx=mc.getContext('2d');
+let W,H;
+function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight}
+addEventListener('resize',resize);resize();
+
+let ac;
+function snd(t){
+  if(!ac)return;
+  try{
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.connect(g);g.connect(ac.destination);g.gain.value=.06;
+    const n=ac.currentTime;
+    if(t==='hit'){o.type='sawtooth';o.frequency.value=250;o.frequency.exponentialRampToValueAtTime(100,n+.1);g.gain.exponentialRampToValueAtTime(.001,n+.12);o.stop(n+.12)}
+    if(t==='hurt'){o.type='square';o.frequency.value=150;o.frequency.exponentialRampToValueAtTime(60,n+.15);g.gain.exponentialRampToValueAtTime(.001,n+.2);o.stop(n+.2)}
+    if(t==='kill'){o.type='square';o.frequency.value=300;o.frequency.exponentialRampToValueAtTime(600,n+.15);g.gain.exponentialRampToValueAtTime(.001,n+.2);o.stop(n+.2)}
+    if(t==='pick'){o.type='sine';o.frequency.value=500;o.frequency.exponentialRampToValueAtTime(900,n+.1);g.gain.exponentialRampToValueAtTime(.001,n+.15);o.stop(n+.15)}
+    if(t==='stair'){o.type='sine';o.frequency.value=400;o.frequency.exponentialRampToValueAtTime(1e3,n+.4);g.gain.exponentialRampToValueAtTime(.001,n+.5);o.stop(n+.5)}
+    if(t==='die'){o.type='sawtooth';o.frequency.value=200;o.frequency.exponentialRampToValueAtTime(30,n+.8);g.gain.exponentialRampToValueAtTime(.001,n+1);o.stop(n+1)}
+    o.start();
+  }catch(e){}
+}
+
+const G={phase:'title',lv:1,map:null,rooms:null,rev:null,vis:null,pl:null,mons:[],items:[],fx:[],msgs:[],stats:{kills:0,items:0,maxLv:1},shake:0};
+
+const ri=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+
+function genLevel(lv){
+  const m=Array.from({length:DH},()=>Array(DW).fill(T.W));
+  const rooms=[];const nr=Math.min(6+lv,12);
+  for(let a=0;a<200&&rooms.length<nr;a++){
+    const w=ri(4,9),h=ri(3,7),x=ri(1,DW-w-2),y=ri(1,DH-h-2);
+    if(rooms.some(r=>x<r.x+r.w+2&&x+w+2>r.x&&y<r.y+r.h+2&&y+h+2>r.y))continue;
+    rooms.push({x,y,w,h,cx:x+(w>>1),cy:y+(h>>1)});
+    for(let ry=y;ry<y+h;ry++)for(let rx=x;rx<x+w;rx++)m[ry][rx]=T.F;
+  }
+  for(let i=0;i<rooms.length-1;i++){
+    const a=rooms[i],b=rooms[i+1];let px=a.cx,py=a.cy;
+    if(Math.random()<.5){
+      while(px!==b.cx){px+=Math.sign(b.cx-px);if(m[py][px]===T.W)m[py][px]=T.F}
+      while(py!==b.cy){py+=Math.sign(b.cy-py);if(m[py][px]===T.W)m[py][px]=T.F}
+    }else{
+      while(py!==b.cy){py+=Math.sign(b.cy-py);if(m[py][px]===T.W)m[py][px]=T.F}
+      while(px!==b.cx){px+=Math.sign(b.cx-px);if(m[py][px]===T.W)m[py][px]=T.F}
+    }
+  }
+  const last=rooms[rooms.length-1];m[last.cy][last.cx]=T.S;
+  return{map:m,rooms,rev:Array.from({length:DH},()=>Array(DW).fill(false)),vis:Array.from({length:DH},()=>Array(DW).fill(false))};
+}
+
+function spawn(lv,map,rooms){
+  const r0=rooms[0];
+  const pl=G.pl||{x:0,y:0,hp:20,mhp:20,atk:2,def:0,sc:0};
+  pl.x=r0.cx;pl.y=r0.cy;
+  const occ=[{x:pl.x,y:pl.y}];
+  const last=rooms[rooms.length-1];occ.push({x:last.cx,y:last.cy});
+  const avail=MONS.filter(m=>m.ml<=lv);
+  const mons=[];const nm=Math.min(3+lv*2,20);
+  for(let i=0;i<nm;i++){
+    const t=avail[ri(0,avail.length-1)];
+    const rm=rooms[ri(1,rooms.length-1)];
+    const mx2=ri(rm.x+1,rm.x+rm.w-2),my2=ri(rm.y+1,rm.y+rm.h-2);
+    if(occ.some(p=>p.x===mx2&&p.y===my2)||map[my2][mx2]!==T.F)continue;
+    occ.push({x:mx2,y:my2});
+    mons.push({x:mx2,y:my2,name:t.name,emoji:t.emoji,hp:t.hp+Math.floor(lv*.5),mhp:t.hp+Math.floor(lv*.5),atk:t.atk,sc:t.sc,alive:true});
+  }
+  const items=[];
+  const itypes=[{t:'pot',e:'🧪',n:'Lektvar',w:4},{t:'swd',e:'⚔️',n:'Meč',w:2},{t:'shd',e:'🛡️',n:'Štít',w:2},{t:'gem',e:'💎',n:'Drahokam',w:3}];
+  const ni=Math.min(4+lv,15);
+  for(let i=0;i<ni;i++){
+    const tw=itypes.reduce((s,x)=>s+x.w,0);let r=Math.random()*tw;let ch=itypes[0];
+    for(const x of itypes){r-=x.w;if(r<=0){ch=x;break}}
+    const tiles=[];
+    for(let y=0;y<DH;y++)for(let x=0;x<DW;x++)if(map[y][x]===T.F&&!occ.some(p=>p.x===x&&p.y===y))tiles.push({x,y});
+    if(!tiles.length)break;
+    const tile=tiles[ri(0,tiles.length-1)];occ.push(tile);
+    items.push({x:tile.x,y:tile.y,t:ch.t,e:ch.e,n:ch.n});
+  }
+  return{pl,mons,items};
+}
+
+function los(x0,y0,x1,y1){
+  const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0),sx=x0<x1?1:-1,sy=y0<y1?1:-1;
+  let err=dx-dy,x=x0,y=y0;
+  while(x!==x1||y!==y1){
+    if(G.map[y][x]===T.W&&(x!==x0||y!==y0))return false;
+    const e2=2*err;
+    if(e2>-dy){err-=dy;x+=sx}
+    if(e2<dx){err+=dx;y+=sy}
+  }
+  return true;
+}
+
+function updVis(){
+  const{map,rev,vis,pl}=G;
+  for(let y=0;y<DH;y++)for(let x=0;x<DW;x++)vis[y][x]=false;
+  for(let dy=-VR;dy<=VR;dy++)for(let dx=-VR;dx<=VR;dx++){
+    if(dx*dx+dy*dy>VR*VR)continue;
+    const tx=pl.x+dx,ty=pl.y+dy;
+    if(tx<0||tx>=DW||ty<0||ty>=DH)continue;
+    if(los(pl.x,pl.y,tx,ty)){vis[ty][tx]=true;rev[ty][tx]=true}
+  }
+}
+
+function addFx(x,y,text,color){G.fx.push({x,y,text,color,f:0,mf:40})}
+function updFx(){G.fx=G.fx.filter(e=>(e.f++,e.f<e.mf))}
+function msg(t){G.msgs.push(t);if(G.msgs.length>5)G.msgs.shift();
+  const el=document.getElementById('msgs');
+  el.innerHTML=G.msgs.map((m,i)=>`<div class="m" style="opacity:${.4+(i/G.msgs.length)*.6}">${m}</div>`).join('');
+}
+
+function atkMon(mon){
+  const dmg=Math.max(1,G.pl.atk+ri(0,1));mon.hp-=dmg;
+  addFx(mon.x,mon.y,`-${dmg}`,'#ff6b6b');snd('hit');
+  msg(`Útočíš na ${mon.emoji} ${mon.name}! (${dmg} zranění)`);
+  if(mon.hp<=0){mon.alive=false;G.pl.sc+=mon.sc;G.stats.kills++;
+    addFx(mon.x,mon.y,`+${mon.sc}⭐`,'#ffd700');msg(`${mon.emoji} ${mon.name} poražen! +${mon.sc} bodů`);snd('kill');
+  }
+}
+
+function monAtk(mon){
+  const dmg=Math.max(1,mon.atk-G.pl.def+ri(-1,1));G.pl.hp-=dmg;
+  addFx(G.pl.x,G.pl.y,`-${dmg}`,'#ff0000');G.shake=5;snd('hurt');
+  msg(`${mon.emoji} ${mon.name} útočí! (${dmg} zranění)`);
+  if(G.pl.hp<=0){G.pl.hp=0;G.phase='dead';snd('die');msg('💀 Padl jsi v dungeonu!');showOv('dead')}
+}
+
+function pickup(idx){
+  const it=G.items[idx];G.items.splice(idx,1);G.stats.items++;snd('pick');
+  if(it.t==='pot'){const h=ri(5,10);G.pl.hp=Math.min(G.pl.mhp,G.pl.hp+h);msg(`🧪 Lektvar! +${h} HP`);addFx(it.x,it.y,`+${h}❤️`,'#e74c3c')}
+  if(it.t==='swd'){G.pl.atk+=1;msg('⚔️ Nový meč! +1 útok');addFx(it.x,it.y,'+1⚔️','#ecf0f1')}
+  if(it.t==='shd'){G.pl.def+=1;msg('🛡️ Nový štít! +1 obrana');addFx(it.x,it.y,'+1🛡️','#cd7f32')}
+  if(it.t==='gem'){const p=30+G.lv*20;G.pl.sc+=p;msg(`💎 Drahokam! +${p} bodů`);addFx(it.x,it.y,`+${p}⭐`,'#1abc9c')}
+}
+
+function moveMons(){
+  for(const m of G.mons){
+    if(!m.alive)continue;
+    const d=Math.abs(m.x-G.pl.x)+Math.abs(m.y-G.pl.y);
+    if(d>8)continue;
+    if(d<=1){monAtk(m);continue}
+    if(d>6)continue;
+    const dx=Math.sign(G.pl.x-m.x),dy=Math.sign(G.pl.y-m.y);
+    const tries=Math.random()<.5?[{dx,dy:0},{dx:0,dy}]:[{dx:0,dy},{dx,dy:0}];
+    for(const t of tries){
+      const nx=m.x+t.dx,ny=m.y+t.dy;
+      if(nx<0||nx>=DW||ny<0||ny>=DH)continue;
+      if(G.map[ny][nx]===T.W)continue;
+      if(G.mons.some(o=>o!==m&&o.alive&&o.x===nx&&o.y===ny))continue;
+      if(nx===G.pl.x&&ny===G.pl.y)continue;
+      m.x=nx;m.y=ny;break;
+    }
+  }
+}
+
+function movePl(dx,dy){
+  if(G.phase!=='playing')return;
+  const nx=G.pl.x+dx,ny=G.pl.y+dy;
+  if(nx<0||nx>=DW||ny<0||ny>=DH)return;
+  if(G.map[ny][nx]===T.W)return;
+  const mon=G.mons.find(m=>m.alive&&m.x===nx&&m.y===ny);
+  if(mon){atkMon(mon);moveMons();updVis();return}
+  G.pl.x=nx;G.pl.y=ny;
+  const ii=G.items.findIndex(i=>i.x===nx&&i.y===ny);
+  if(ii>=0)pickup(ii);
+  if(G.map[ny][nx]===T.S){nextLv();return}
+  moveMons();updVis();
+}
+
+function nextLv(){
+  G.lv++;G.stats.maxLv=Math.max(G.stats.maxLv,G.lv);
+  if(G.lv>10){G.phase='win';G.pl.sc+=500;snd('stair');showOv('win');return}
+  snd('stair');msg(`⬇️ Sestupuješ do patra ${G.lv}...`);
+  G.pl.hp=Math.min(G.pl.mhp,G.pl.hp+5);G.pl.mhp+=2;
+  const{map,rooms,rev,vis}=genLevel(G.lv);
+  G.map=map;G.rooms=rooms;G.rev=rev;G.vis=vis;
+  const{pl,mons,items}=spawn(G.lv,map,rooms);
+  G.pl.x=pl.x;G.pl.y=pl.y;G.mons=mons;G.items=items;
+  updVis();
+}
+
+function cam(){
+  const vw=Math.floor(W/TS),vh=Math.floor((H-44)/TS);
+  let cx=G.pl.x-(vw>>1),cy=G.pl.y-(vh>>1);
+  cx=Math.max(0,Math.min(cx,DW-vw));cy=Math.max(0,Math.min(cy,DH-vh));
+  return{x:cx,y:cy,w:vw,h:vh};
+}
+
+function render(){
+  cx.fillStyle='#0a0a1a';cx.fillRect(0,0,W,H);
+  if(G.phase==='title'||!G.pl)return;
+  cx.save();
+  if(G.shake>0){cx.translate((Math.random()-.5)*G.shake*2,(Math.random()-.5)*G.shake*2);G.shake*=.7;if(G.shake<.5)G.shake=0}
+  const c=cam();
+  const ox=(W-c.w*TS)/2,oy=44+((H-44)-c.h*TS)/2;
+  for(let vy=-1;vy<=c.h+1;vy++)for(let vx=-1;vx<=c.w+1;vx++){
+    const tx=c.x+vx,ty=c.y+vy;
+    if(tx<0||tx>=DW||ty<0||ty>=DH)continue;
+    const px=ox+vx*TS,py=oy+vy*TS;
+    if(!G.rev[ty][tx])continue;
+    const iv=G.vis[ty][tx],tile=G.map[ty][tx];
+    if(tile===T.W){
+      cx.fillStyle=iv?'#2c2c5e':'#1a1a38';cx.fillRect(px,py,TS,TS);
+      cx.fillStyle=iv?'#3d3d7a':'#252548';cx.fillRect(px,py,TS,2);cx.fillRect(px,py,2,TS);
+    }else{
+      cx.fillStyle=iv?'#1a1a42':'#111130';cx.fillRect(px,py,TS,TS);
+      cx.fillStyle=iv?'#1e1e4a':'#131338';cx.fillRect(px+TS-1,py,1,TS);cx.fillRect(px,py+TS-1,TS,1);
+      if(tile===T.S&&iv){cx.font=(TS-8)+'px "Segoe UI Emoji",serif';cx.textAlign='center';cx.textBaseline='middle';cx.fillText('🪜',px+TS/2,py+TS/2)}
+    }
+    if(!iv){cx.fillStyle='rgba(0,0,0,.5)';cx.fillRect(px,py,TS,TS)}
+  }
+  for(const it of G.items){
+    if(!G.vis[it.y][it.x])continue;
+    const px=ox+(it.x-c.x)*TS,py=oy+(it.y-c.y)*TS;
+    cx.shadowColor='#ffd700';cx.shadowBlur=8;
+    cx.font=(TS-10)+'px "Segoe UI Emoji",serif';cx.textAlign='center';cx.textBaseline='middle';
+    cx.fillText(it.e,px+TS/2,py+TS/2);cx.shadowBlur=0;
+  }
+  for(const m of G.mons){
+    if(!m.alive||!G.vis[m.y][m.x])continue;
+    const px=ox+(m.x-c.x)*TS,py=oy+(m.y-c.y)*TS;
+    cx.font=(TS-6)+'px "Segoe UI Emoji",serif';cx.textAlign='center';cx.textBaseline='middle';
+    cx.fillText(m.emoji,px+TS/2,py+TS/2);
+    if(m.hp<m.mhp){const bw=TS-4,pct=m.hp/m.mhp;cx.fillStyle='#333';cx.fillRect(px+2,py-2,bw,3);cx.fillStyle=pct>.5?'#2ecc71':'#e74c3c';cx.fillRect(px+2,py-2,bw*pct,3)}
+  }
+  {const px=ox+(G.pl.x-c.x)*TS,py=oy+(G.pl.y-c.y)*TS;
+    cx.shadowColor='#ffd700';cx.shadowBlur=12;
+    cx.font=(TS-4)+'px "Segoe UI Emoji",serif';cx.textAlign='center';cx.textBaseline='middle';
+    cx.fillText('🧙',px+TS/2,py+TS/2);cx.shadowBlur=0}
+  for(const e of G.fx){
+    const pr=e.f/e.mf;
+    const px=ox+(e.x-c.x)*TS+TS/2,py=oy+(e.y-c.y)*TS-pr*30;
+    cx.globalAlpha=1-pr;cx.font='bold 15px Segoe UI,sans-serif';cx.textAlign='center';
+    cx.fillStyle=e.color;cx.strokeStyle='#000';cx.lineWidth=3;cx.strokeText(e.text,px,py);cx.fillText(e.text,px,py);cx.globalAlpha=1;
+  }
+  cx.restore();
+  renderMM();updUI();
+}
+
+function renderMM(){
+  if(G.phase!=='playing'){mc.style.display='none';return}
+  mc.style.display='block';mc.width=DW*MMS;mc.height=DH*MMS;
+  mx.fillStyle='#0a0a1a';mx.fillRect(0,0,mc.width,mc.height);
+  for(let y=0;y<DH;y++)for(let x=0;x<DW;x++){
+    if(!G.rev[y][x])continue;
+    mx.fillStyle=G.map[y][x]===T.W?(G.vis[y][x]?'#2c2c5e':'#1a1a38'):(G.vis[y][x]?'#3a3a6e':'#252550');
+    mx.fillRect(x*MMS,y*MMS,MMS,MMS);
+  }
+  const last=G.rooms[G.rooms.length-1];
+  if(G.rev[last.cy][last.cx]){mx.fillStyle='#3498db';mx.fillRect(last.cx*MMS,last.cy*MMS,MMS,MMS)}
+  mx.fillStyle='#ffd700';mx.fillRect(G.pl.x*MMS-1,G.pl.y*MMS-1,MMS+2,MMS+2);
+}
+
+function updUI(){
+  const p=G.pl;if(!p)return;
+  document.getElementById('hpT').textContent=p.hp+'/'+p.mhp;
+  const bar=document.getElementById('hpBar'),pct=p.hp/p.mhp;
+  bar.style.width=(pct*100)+'%';bar.style.background=pct>.5?'#2ecc71':pct>.25?'#f39c12':'#e74c3c';
+  document.getElementById('atkT').textContent=p.atk;
+  document.getElementById('defT').textContent=p.def;
+  document.getElementById('lvT').textContent=G.lv;
+  document.getElementById('scrT').textContent=p.sc;
+}
+
+function showOv(t){
+  const el=document.getElementById('ov');el.classList.remove('hid');
+  if(t==='dead')el.innerHTML=`<h1>💀 Konec hry!</h1><h2>Padl jsi v dungeonu...</h2><div class="scr">⭐ ${G.pl.sc} bodů</div><p>🏰 Dosažené patro: ${G.stats.maxLv}</p><p>👹 Poražených příšer: ${G.stats.kills}</p><p>📦 Sebraných předmětů: ${G.stats.items}</p><div class="hint">⏎ ENTER = nová hra</div>`;
+  if(t==='win')el.innerHTML=`<h1>🎉 Vítězství!</h1><h2>Unikl jsi z dungeonu!</h2><div class="scr">⭐ ${G.pl.sc} bodů</div><p>👹 Poražených příšer: ${G.stats.kills}</p><p>📦 Sebraných předmětů: ${G.stats.items}</p><div class="hint">⏎ ENTER = nová hra</div>`;
+}
+
+function startGame(){
+  if(!ac)ac=new(window.AudioContext||window.webkitAudioContext)();
+  G.lv=1;G.phase='playing';G.msgs=[];G.fx=[];G.stats={kills:0,items:0,maxLv:1};G.pl=null;
+  const{map,rooms,rev,vis}=genLevel(1);G.map=map;G.rooms=rooms;G.rev=rev;G.vis=vis;
+  const{pl,mons,items}=spawn(1,map,rooms);G.pl=pl;G.mons=mons;G.items=items;
+  updVis();document.getElementById('ov').classList.add('hid');document.getElementById('ui').style.display='flex';
+  msg('🏰 Vítej v dungeonu! Najdi schody 🪜 do dalšího patra.');
+}
+
+function resetGame(){
+  G.phase='title';
+  document.getElementById('ov').innerHTML='<h1>🏰 Průzkumník Dungeonu</h1><h2>Prozkoumej temné podzemí!</h2><p>Sbírej poklady, bojuj s příšerami a dostań se co nejhlouběji!</p><div class="ctrl"><strong>Ovládání:</strong><br>← ↑ → ↓ nebo W A S D — pohyb<br>Naraz do příšery — útok<br>Mezerník — čekej<br>Najdi schody 🪜 a sestup do dalšího patra</div><div class="hint">⏎ ENTER pro start</div>';
+  document.getElementById('ov').classList.remove('hid');document.getElementById('ui').style.display='none';
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){if(G.phase==='title'){startGame();return}if(G.phase==='dead'||G.phase==='win'){resetGame();return}}
+  if(G.phase!=='playing')return;
+  let dx=0,dy=0;
+  switch(e.key){
+    case'ArrowUp':case'w':case'W':dy=-1;break;
+    case'ArrowDown':case's':case'S':dy=1;break;
+    case'ArrowLeft':case'a':case'A':dx=-1;break;
+    case'ArrowRight':case'd':case'D':dx=1;break;
+    case' ':moveMons();updVis();e.preventDefault();return;
+    default:return;
+  }
+  e.preventDefault();movePl(dx,dy);
+});
+
+(function loop(){updFx();render();requestAnimationFrame(loop)})();
+</script>
+</body>
+</html>
