@@ -44,7 +44,7 @@ canvas#mm{position:fixed;bottom:10px;right:10px;border:2px solid #2c2c54;border-
   <h1>🏰 Průzkumník Dungeonu</h1>
   <h2>Prozkoumej temné podzemí!</h2>
   <p>Sbírej poklady, bojuj s příšerami a dostań se co nejhlouběji!</p>
-  <div class="ctrl"><strong>Ovládání:</strong><br>← ↑ → ↓ nebo W A S D — pohyb<br>Naraz do příšery — útok<br>Mezerník — čekej (přeskoč tah)<br>Najdi schody 🪜 a sestup do dalšího patra<br>Projdi 10 pater a unikni!</div>
+  <div class="ctrl"><strong>Ovládání:</strong><br>← ↑ → ↓ nebo W A S D — pohyb<br>Naraz do příšery — útok<br>Příšery se pohybují samy — buď rychlejší!<br>Najdi schody 🪜 a sestup do dalšího patra<br>Projdi 10 pater a unikni!</div>
   <div class="hint">⏎ Stiskni ENTER pro start</div>
 </div>
 <script>
@@ -83,7 +83,7 @@ function snd(t){
   }catch(e){}
 }
 
-const G={phase:'title',lv:1,map:null,rooms:null,rev:null,vis:null,pl:null,mons:[],items:[],fx:[],msgs:[],stats:{kills:0,items:0,maxLv:1},shake:0};
+const G={phase:'title',lv:1,map:null,rooms:null,rev:null,vis:null,pl:null,mons:[],items:[],fx:[],msgs:[],stats:{kills:0,items:0,maxLv:1},shake:0,monTimer:null};
 
 const ri=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
 
@@ -184,7 +184,7 @@ function monAtk(mon){
   const dmg=Math.max(1,mon.atk-G.pl.def+ri(-1,1));G.pl.hp-=dmg;
   addFx(G.pl.x,G.pl.y,`-${dmg}`,'#ff0000');G.shake=5;snd('hurt');
   msg(`${mon.emoji} ${mon.name} útočí! (${dmg} zranění)`);
-  if(G.pl.hp<=0){G.pl.hp=0;G.phase='dead';snd('die');msg('💀 Padl jsi v dungeonu!');showOv('dead')}
+  if(G.pl.hp<=0){G.pl.hp=0;G.phase='dead';stopMonTimer();snd('die');msg('💀 Padl jsi v dungeonu!');showOv('dead')}
 }
 
 function pickup(idx){
@@ -221,17 +221,17 @@ function movePl(dx,dy){
   if(nx<0||nx>=DW||ny<0||ny>=DH)return;
   if(G.map[ny][nx]===T.W)return;
   const mon=G.mons.find(m=>m.alive&&m.x===nx&&m.y===ny);
-  if(mon){atkMon(mon);moveMons();updVis();return}
+  if(mon){atkMon(mon);updVis();return}
   G.pl.x=nx;G.pl.y=ny;
   const ii=G.items.findIndex(i=>i.x===nx&&i.y===ny);
   if(ii>=0)pickup(ii);
   if(G.map[ny][nx]===T.S){nextLv();return}
-  moveMons();updVis();
+  updVis();
 }
 
 function nextLv(){
   G.lv++;G.stats.maxLv=Math.max(G.stats.maxLv,G.lv);
-  if(G.lv>10){G.phase='win';G.pl.sc+=500;snd('stair');showOv('win');return}
+  if(G.lv>10){G.phase='win';G.pl.sc+=500;stopMonTimer();snd('stair');showOv('win');return}
   snd('stair');msg(`⬇️ Sestupuješ do patra ${G.lv}...`);
   G.pl.hp=Math.min(G.pl.mhp,G.pl.hp+5);G.pl.mhp+=2;
   const{map,rooms,rev,vis}=genLevel(G.lv);
@@ -330,18 +330,28 @@ function showOv(t){
   if(t==='win')el.innerHTML=`<h1>🎉 Vítězství!</h1><h2>Unikl jsi z dungeonu!</h2><div class="scr">⭐ ${G.pl.sc} bodů</div><p>👹 Poražených příšer: ${G.stats.kills}</p><p>📦 Sebraných předmětů: ${G.stats.items}</p><div class="hint">⏎ ENTER = nová hra</div>`;
 }
 
+function startMonTimer(){
+  stopMonTimer();
+  G.monTimer=setInterval(()=>{
+    if(G.phase!=='playing')return;
+    moveMons();updVis();
+  },500);
+}
+function stopMonTimer(){if(G.monTimer){clearInterval(G.monTimer);G.monTimer=null}}
+
 function startGame(){
   if(!ac)ac=new(window.AudioContext||window.webkitAudioContext)();
   G.lv=1;G.phase='playing';G.msgs=[];G.fx=[];G.stats={kills:0,items:0,maxLv:1};G.pl=null;
   const{map,rooms,rev,vis}=genLevel(1);G.map=map;G.rooms=rooms;G.rev=rev;G.vis=vis;
   const{pl,mons,items}=spawn(1,map,rooms);G.pl=pl;G.mons=mons;G.items=items;
   updVis();document.getElementById('ov').classList.add('hid');document.getElementById('ui').style.display='flex';
+  startMonTimer();
   msg('🏰 Vítej v dungeonu! Najdi schody 🪜 do dalšího patra.');
 }
 
 function resetGame(){
   G.phase='title';
-  document.getElementById('ov').innerHTML='<h1>🏰 Průzkumník Dungeonu</h1><h2>Prozkoumej temné podzemí!</h2><p>Sbírej poklady, bojuj s příšerami a dostań se co nejhlouběji!</p><div class="ctrl"><strong>Ovládání:</strong><br>← ↑ → ↓ nebo W A S D — pohyb<br>Naraz do příšery — útok<br>Mezerník — čekej<br>Najdi schody 🪜 a sestup do dalšího patra</div><div class="hint">⏎ ENTER pro start</div>';
+  document.getElementById('ov').innerHTML='<h1>🏰 Průzkumník Dungeonu</h1><h2>Prozkoumej temné podzemí!</h2><p>Sbírej poklady, bojuj s příšerami a dostań se co nejhlouběji!</p><div class="ctrl"><strong>Ovládání:</strong><br>← ↑ → ↓ nebo W A S D — pohyb<br>Naraz do příšery — útok<br>Příšery se pohybují samy!<br>Najdi schody 🪜 a sestup do dalšího patra</div><div class="hint">⏎ ENTER pro start</div>';
   document.getElementById('ov').classList.remove('hid');document.getElementById('ui').style.display='none';
 }
 
@@ -354,7 +364,7 @@ document.addEventListener('keydown',e=>{
     case'ArrowDown':case's':case'S':dy=1;break;
     case'ArrowLeft':case'a':case'A':dx=-1;break;
     case'ArrowRight':case'd':case'D':dx=1;break;
-    case' ':moveMons();updVis();e.preventDefault();return;
+    case' ':e.preventDefault();return;
     default:return;
   }
   e.preventDefault();movePl(dx,dy);
